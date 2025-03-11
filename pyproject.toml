@@ -25,4 +25,7 @@ keywords = ["llm", "transformers", "validation", "pytest"]
 check-model-config = "check_model_config.cli:main"
 
 [tool.pytest.ini_options]
-addopts = "-v --tb=short -ra"
+addopts = "-v --tb=short -ra -rP -W always"
+filterwarnings = [
+    "always::UserWarning"
+]

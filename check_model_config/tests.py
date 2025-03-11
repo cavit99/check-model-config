@@ -8,6 +8,8 @@ import torch
 from pathlib import Path
 from transformers import AutoModelForCausalLM, AutoTokenizer, PretrainedConfig
 
+warnings.filterwarnings("always", category=UserWarning)
+
 # Check if weights should be loaded (set by cli.py)
 load_weights = os.environ.get("CHECK_LOAD_WEIGHTS", "True") == "True"
 
