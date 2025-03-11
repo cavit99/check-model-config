@@ -6,59 +6,70 @@ import torch
 from pathlib import Path
 from transformers import AutoModelForCausalLM, AutoTokenizer, PretrainedConfig
 
-def get_model_setup(model_path):
-    """Load config, model, and tokenizer for a given model path."""
+# Check if weights should be loaded (set by cli.py)
+load_weights = os.environ.get("CHECK_LOAD_WEIGHTS", "True") == "True"
+
+def get_model_setup(model_path, load_weights=True):
+    """Load config, and optionally model and tokenizer, based on load_weights flag."""
     if model_path is None:
         raise ValueError("Model path must be provided via CHECK_MODEL_PATH environment variable")
     
-    device = "auto" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-    
+    # Load raw config
     if Path(model_path).is_dir():
         with open(Path(model_path) / "config.json", "r") as f:
             raw_config = json.load(f)
     else:
         raw_config = PretrainedConfig.from_pretrained(model_path).to_dict()
 
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        torch_dtype=torch.bfloat16,
-        device_map=device
-    )
-    config = model.config
-    print(f"Model loaded on device: {next(model.parameters()).device}")
+    setup = {"raw_config": raw_config}
+    
+    if load_weights:
+        device = "auto" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16,
+            device_map=device
+        )
+        setup["model"] = model
+        setup["config"] = model.config
+        setup["device"] = device
+        print(f"Model loaded on device: {next(model.parameters()).device}")
+    else:
+        setup["config"] = PretrainedConfig.from_pretrained(model_path)
+        setup["device"] = "none"
+        print("Skipping model weight loading")
 
+    # Tokenizer is always loaded as it's lightweight
     tokenizer = AutoTokenizer.from_pretrained(model_path)
+    setup["tokenizer"] = tokenizer
     print(f"Tokenizer loaded with vocab size: {len(tokenizer)}")
-    print("Model Config:", config.to_dict())
+    print("Model Config:", setup["config"].to_dict())
 
-    return {
-        "model": model,
-        "config": config,
-        "raw_config": raw_config,
-        "tokenizer": tokenizer,
-        "device": device
-    }
+    return setup
 
 @pytest.fixture(scope="module")
 def model_setup():
-    """Fixture to provide model setup with dynamic model path."""
+    """Fixture to provide model setup with dynamic model path and load_weights flag."""
     model_path = os.environ.get("CHECK_MODEL_PATH")
+    load_weights_flag = os.environ.get("CHECK_LOAD_WEIGHTS", "True") == "True"
     if not model_path:
         raise ValueError("CHECK_MODEL_PATH environment variable not set. Run with 'check-model-config --model <path>'")
-    setup = get_model_setup(model_path)
+    setup = get_model_setup(model_path, load_weights_flag)
     yield setup
     
     # Cleanup
-    del setup["model"]
+    if load_weights_flag:
+        del setup["model"]
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            if hasattr(torch.mps, 'empty_cache'):
+                torch.mps.empty_cache()
+            torch.mps.synchronize()
     del setup["tokenizer"]
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        if hasattr(torch.mps, 'empty_cache'):
-            torch.mps.empty_cache()
-        torch.mps.synchronize()
     gc.collect()
 
+@pytest.mark.skipif(not load_weights, reason="Requires model weights")
 def test_config_vocab_size_vs_weights_and_tokenizer(model_setup):
     """Verify config vocab_size matches embedding weights and tokenizer."""
     config_vocab_size = model_setup["raw_config"]["vocab_size"]
@@ -82,6 +93,7 @@ def test_config_vocab_size_vs_weights_and_tokenizer(model_setup):
     else:
         print(f"Config vocab_size matches tokenizer vocab size ✓")
 
+@pytest.mark.skipif(not load_weights, reason="Requires model weights")
 def test_config_hidden_size_vs_weights(model_setup):
     """Verify config hidden_size matches embedding and attention weights."""
     config_hidden_size = model_setup["raw_config"]["hidden_size"]
@@ -91,16 +103,24 @@ def test_config_hidden_size_vs_weights(model_setup):
     )
     print(f"Config hidden_size ({config_hidden_size}) matches embedding weights ✓")
 
-def test_num_layers(model_setup):
-    """Test the number of hidden layers."""
+def test_num_layers_config(model_setup):
+    """Test the number of hidden layers in the configuration."""
+    config_num_layers = model_setup["raw_config"]["num_hidden_layers"]
+    assert config_num_layers > 0, f"num_hidden_layers must be positive, got {config_num_layers}"
+    print(f"Config num_hidden_layers: {config_num_layers} ✓")
+
+@pytest.mark.skipif(not load_weights, reason="Requires model weights")
+def test_num_layers_weights(model_setup):
+    """Test the number of hidden layers against actual model weights."""
     config_num_layers = model_setup["raw_config"]["num_hidden_layers"]
     actual_num_layers = len(model_setup["model"].model.layers)
     assert config_num_layers == actual_num_layers, (
         f"Config num_hidden_layers ({config_num_layers}) does not match actual layers ({actual_num_layers})"
     )
-    print(f"Number of layers: {actual_num_layers} ✓")
+    print(f"Number of layers matches weights: {actual_num_layers} ✓")
 
 @pytest.mark.parametrize("layer_idx", [0, lambda x: int(x["config"].num_hidden_layers / 2), lambda x: x["config"].num_hidden_layers - 1])
+@pytest.mark.skipif(not load_weights, reason="Requires model weights")
 def test_attention_mechanism(model_setup, layer_idx):
     """Detailed check of attention heads and weights across layers."""
     if callable(layer_idx):
@@ -124,6 +144,7 @@ def test_attention_mechanism(model_setup, layer_idx):
     print(f"Layer {layer_idx} k_proj shape: {k_shape} ✓")
 
 @pytest.mark.parametrize("layer_idx", [0, lambda x: int(x["config"].num_hidden_layers / 2), lambda x: x["config"].num_hidden_layers - 1])
+@pytest.mark.skipif(not load_weights, reason="Requires model weights")
 def test_mlp_layers(model_setup, layer_idx):
     """Test intermediate size in MLP/FFN layers across specific indices."""
     if callable(layer_idx):
@@ -140,6 +161,7 @@ def test_mlp_layers(model_setup, layer_idx):
     else:
         print(f"Layer {layer_idx} has no gate_proj; skipping MLP check")
 
+@pytest.mark.skipif(not load_weights, reason="Requires model weights")
 def test_tied_embeddings(model_setup):
     """Verify tied embeddings configuration."""
     tie_word_embeddings = model_setup["raw_config"].get("tie_word_embeddings", False)
@@ -164,15 +186,16 @@ def test_position_embeddings(model_setup):
     max_pos = model_setup["raw_config"].get("max_position_embeddings", 2048)  # Default if not specified
     assert max_pos > 0, f"max_position_embeddings must be positive, got {max_pos}"
     print(f"max_position_embeddings: {max_pos} ✓")
-    rope_found = hasattr(model_setup["model"].model.layers[0].self_attn, "rotary_emb") or "rope" in str(model_setup["model"].model.layers[0].self_attn).lower()
-    if not rope_found:
-        print("Warning: No clear RoPE implementation found; assuming max_position_embeddings is valid")
-        pytest.warns(
-            UserWarning,
-            match="No clear RoPE implementation found"
-        )
-    else:
-        print("RoPE implementation confirmed ✓")
+    if load_weights:
+        rope_found = hasattr(model_setup["model"].model.layers[0].self_attn, "rotary_emb") or "rope" in str(model_setup["model"].model.layers[0].self_attn).lower()
+        if not rope_found:
+            print("Warning: No clear RoPE implementation found; assuming max_position_embeddings is valid")
+            pytest.warns(
+                UserWarning,
+                match="No clear RoPE implementation found"
+            )
+        else:
+            print("RoPE implementation confirmed ✓")
 
 def test_window_layers(model_setup):
     """Validate sliding window settings."""
