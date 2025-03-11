@@ -25,4 +25,4 @@ keywords = ["llm", "transformers", "validation", "pytest"]
 check-model-config = "check_model_config.cli:main"
 
 [tool.pytest.ini_options]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -ra"

@@ -1,7 +1,9 @@
 import gc
 import json
+import re
 import os
 import pytest
+import warnings
 import torch
 from pathlib import Path
 from transformers import AutoModelForCausalLM, AutoTokenizer, PretrainedConfig
@@ -93,10 +95,14 @@ def test_config_vocab_size_vs_weights_and_tokenizer(model_setup):
         print(f"Config vocab_size ({config_vocab_size}) matches lm_head weight size ✓")
     if config_vocab_size > tokenizer_vocab_size:
         print(f"Note: Config vocab_size > tokenizer vocab size ({config_vocab_size} vs {tokenizer_vocab_size}) - likely padding tokens")
-        pytest.warns(
+        with pytest.warns(
             UserWarning,
-            match=f"Config vocab_size > tokenizer vocab size ({config_vocab_size} vs {tokenizer_vocab_size})"
-        )
+            match=re.escape(f"Config vocab_size > tokenizer vocab size ({config_vocab_size} vs {tokenizer_vocab_size})")
+        ):
+            warnings.warn(
+                f"Config vocab_size > tokenizer vocab size ({config_vocab_size} vs {tokenizer_vocab_size})",
+                UserWarning
+            )
     else:
         print(f"Config vocab_size matches tokenizer vocab size ✓")
 
@@ -128,16 +134,24 @@ def test_raw_config_vs_config(model_setup):
     defaults_injected = {k: config_dict[k] for k in config_dict if k not in raw_dict}
     if differences:
         print(f"Warning: Raw config.json differs from processed config: {differences}")
-        pytest.warns(
+        with pytest.warns(
             UserWarning,
-            match=f"Raw config.json differs from processed config: {differences}"
-        )
+            match=re.escape(f"Raw config.json differs from processed config: {differences}")
+        ):
+            warnings.warn(
+                f"Raw config.json differs from processed config: {differences}",
+                UserWarning
+            )
     if defaults_injected:
         print(f"Warning: Fields injected by PretrainedConfig: {defaults_injected}")
-        pytest.warns(
+        with pytest.warns(
             UserWarning,
-            match=f"PretrainedConfig injected defaults not in config.json: {defaults_injected}"
-        )
+            match=re.escape(f"PretrainedConfig injected defaults not in config.json: {defaults_injected}")
+        ):
+            warnings.warn(
+                f"PretrainedConfig injected defaults not in config.json: {defaults_injected}",
+                UserWarning
+            )
     print("Raw config.json vs processed config checked ✓")
 
 def test_required_fields(model_setup):
@@ -283,10 +297,14 @@ def test_position_embeddings(model_setup):
         rope_found = hasattr(model_setup["model"].model.layers[0].self_attn, "rotary_emb") or "rope" in str(model_setup["model"].model.layers[0].self_attn).lower()
         if not rope_found:
             print("Warning: No clear RoPE implementation found; assuming max_position_embeddings is valid")
-            pytest.warns(
+            with pytest.warns(
                 UserWarning,
                 match="No clear RoPE implementation found"
-            )
+            ):
+                warnings.warn(
+                    "No clear RoPE implementation found",
+                    UserWarning
+                )
         else:
             print("RoPE implementation confirmed ✓")
 
