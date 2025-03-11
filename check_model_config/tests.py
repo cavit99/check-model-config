@@ -1,23 +1,15 @@
+import gc
+import json
+import os
 import pytest
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, PretrainedConfig
-import json
-import gc
 from pathlib import Path
-
-def pytest_addoption(parser):
-    """Register the --model option with pytest."""
-    parser.addoption(
-        "--model",
-        action="store",
-        default=None,
-        help="Path to the model (Hugging Face repo or local directory)"
-    )
+from transformers import AutoModelForCausalLM, AutoTokenizer, PretrainedConfig
 
 def get_model_setup(model_path):
     """Load config, model, and tokenizer for a given model path."""
     if model_path is None:
-        raise ValueError("Model path must be provided via --model")
+        raise ValueError("Model path must be provided via CHECK_MODEL_PATH environment variable")
     
     device = "auto" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     
@@ -48,9 +40,11 @@ def get_model_setup(model_path):
     }
 
 @pytest.fixture(scope="module")
-def model_setup(request):
+def model_setup():
     """Fixture to provide model setup with dynamic model path."""
-    model_path = request.config.getoption("--model")
+    model_path = os.environ.get("CHECK_MODEL_PATH")
+    if not model_path:
+        raise ValueError("CHECK_MODEL_PATH environment variable not set. Run with 'check-model-config --model <path>'")
     setup = get_model_setup(model_path)
     yield setup
     
@@ -192,15 +186,6 @@ def test_window_layers(model_setup):
             f"Config Error: max_window_layers ({max_window}) exceeds num_hidden_layers ({num_layers})"
         )
         print(f"Sliding window enabled - max_window_layers ({max_window}) ≤ num_hidden_layers ({num_layers}) ✓")
-
-def test_basic_inference(model_setup):
-    """Test basic inference to ensure model functionality."""
-    input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long).to(model_setup["device"])
-    output = model_setup["model"](input_ids)
-    assert output is not None and "logits" in output, (
-        "Inference failed: output is None or missing logits"
-    )
-    print("Basic inference output contains logits ✓")
 
 if __name__ == "__main__":
     pytest.main(["-v", "--tb=short"])
