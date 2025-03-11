@@ -3,6 +3,7 @@ import argparse
 import sys
 import pytest
 import os
+from pathlib import Path
 
 def main():
     """Run model configuration validation with the provided model path and optional load_weights flag."""
@@ -30,8 +31,9 @@ def main():
     os.environ["CHECK_LOAD_WEIGHTS"] = str(load_weights)
     print(f"Running tests with load_weights={load_weights}...please wait...")
 
-    # Run pytest on the test file
-    exit_code = pytest.main(["check_model_config/tests.py"])
+    # Use absolute path to the tests.py file in the source directory
+    test_file = Path(__file__).parent / "tests.py"
+    exit_code = pytest.main([str(test_file)])
     sys.exit(exit_code)
 
 if __name__ == "__main__":

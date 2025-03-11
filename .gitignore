@@ -6,3 +6,5 @@ __pycache__/
 *.pyw
 *.pyz
 *.pytest_cache/
+test-env/
+dist/
